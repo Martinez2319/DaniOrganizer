@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace DaniOrganizer.Core;
 
 public enum Grouping { Type, Date, TypeAndDate }
-public record Options(string Source, string Destination, Grouping Grouping, bool Recursive);
+public record Options(string Source, string Destination, Grouping Grouping, bool Recursive, IReadOnlyList<string>? ExcludedPaths = null);
 public record PlannedMove(string Source, string Destination, long Length, DateTime ModifiedUtc);
 public record Plan(Options Options, IReadOnlyList<PlannedMove> Moves, IReadOnlyList<string> Warnings);
 public record DuplicateSet(string Hash, long Length, IReadOnlyList<string> Files);
@@ -27,9 +27,22 @@ public static class Organizer
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
     public static string DefaultJournal => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DaniOrganizer", "operations");
-    public static bool Within(string path, string directory) =>
-        Path.GetFullPath(path).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    public static bool Within(string path, string directory)
+    {
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        string prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        return !full.Equals(root, StringComparison.OrdinalIgnoreCase) && full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
     private static bool Same(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)), StringComparison.OrdinalIgnoreCase);
+
+    public static Plan Select(Plan plan, IEnumerable<string> sources)
+    {
+        var selected = sources.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (selected.Except(plan.Moves.Select(move => move.Source), StringComparer.OrdinalIgnoreCase).Any())
+            throw new ArgumentException("La selección contiene archivos que no están en la vista previa.");
+        return plan with { Moves = plan.Moves.Where(move => selected.Contains(move.Source)).ToArray() };
+    }
 
     public static Plan Preview(Options options, CancellationToken token = default)
     {
@@ -76,16 +89,20 @@ public static class Organizer
 
     private static IEnumerable<string> Enumerate(Options options, List<string> warnings, CancellationToken token)
     {
+        var excluded = (options.ExcludedPaths ?? Array.Empty<string>()).Select(path => Path.GetFullPath(path, Path.GetFullPath(options.Source))).ToArray();
+        bool IsExcluded(string path) => excluded.Any(item => Same(path, item) || Within(path, item));
         var pending = new Stack<string>(); pending.Push(Path.GetFullPath(options.Source));
         while (pending.Count > 0)
         {
             token.ThrowIfCancellationRequested(); string directory = pending.Pop();
+            if (IsExcluded(directory)) continue;
             string[] entries;
             try { entries = Directory.GetFileSystemEntries(directory); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { warnings.Add(directory + ": " + ex.Message); continue; }
             foreach (var path in entries)
             {
                 token.ThrowIfCancellationRequested();
+                if (IsExcluded(path)) continue;
                 FileAttributes attributes;
                 try { attributes = File.GetAttributes(path); }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { warnings.Add(path + ": " + ex.Message); continue; }

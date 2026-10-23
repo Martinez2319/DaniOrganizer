@@ -6,10 +6,12 @@
 
 ![Vista de demostración de DaniOrganizer](docs/preview.png)
 
-## Qué hace la versión 0.1.0
+## Qué hace la versión 0.2.0
 
 - Organiza por **tipo**, **mes de modificación** o **tipo y mes**.
 - Muestra origen, destino y tamaño de cada archivo antes de moverlo.
+- Permite marcar individualmente qué archivos organizar, con **Marcar todos** y **Desmarcar todos**.
+- Guarda exclusiones de archivos y carpetas completas, también para la búsqueda de duplicados.
 - Busca duplicados por tamaño y **SHA-256 del contenido**, aunque sus nombres sean distintos. Esta versión solo los muestra; no los elimina.
 - Evita sobrescribir archivos: propone nombres con sufijos cuando coinciden.
 - Guarda un historial persistente y permite deshacer una operación después de reiniciar la aplicación.
@@ -21,14 +23,18 @@
 2. Abre `DaniOrganizer.exe`. El paquete incluye .NET; no necesitas instalarlo.
 3. Elige el origen. El destino propuesto es `_Organizado` dentro de esa carpeta; también puedes elegir otra carpeta separada.
 4. Elige la agrupación y si quieres incluir subcarpetas.
-5. Pulsa **Vista previa**, revisa los destinos y pulsa **Organizar archivos**.
-6. Para volver atrás, abre **Historial**, selecciona la operación y pulsa **Deshacer selección**.
+5. Si hay archivos o carpetas que quieras dejar intactos, pulsa **Exclusiones**, añádelos y guarda la lista.
+6. Pulsa **Vista previa**. En la columna **Sí**, desmarca lo que no quieras mover. Puedes usar **Desmarcar todos** y marcar solo los archivos deseados. El contador muestra cuántos se organizarán.
+7. Revisa los destinos y pulsa **Organizar (cantidad)**. Solo se moverán los archivos marcados.
+8. Para volver atrás, abre **Historial**, selecciona la operación y pulsa **Deshacer selección**.
+
+Las casillas se reinician al generar una nueva vista previa. Para omitir algo siempre, usa **Exclusiones**: puedes añadir varios archivos, una carpeta con todo su contenido, o quitar entradas de la lista. Las reglas se conservan al cerrar y abrir la aplicación. Cambiarlas invalida la vista previa y obliga a revisarla de nuevo. Se guardan como rutas completas en `%LOCALAPPDATA%\DaniOrganizer\exclusions.json`.
 
 **Buscar duplicados** no necesita aplicar la vista previa. Los duplicados se muestran en grupos; el espacio indicado corresponde a copias repetidas, no a espacio que se haya liberado.
 
 ## Cómo protege los archivos
 
-La vista previa no modifica archivos. Antes de organizar se comprueba que los archivos no hayan cambiado desde el análisis y que los destinos sigan libres. Cada movimiento se registra antes y después de ejecutarlo. Si una operación falla o se cancela, puede quedar parcialmente completada; el historial permite deshacer los movimientos registrados.
+La vista previa no modifica archivos. Antes de organizar se comprueba que los archivos seleccionados no hayan cambiado desde el análisis y que sus destinos sigan libres. Los archivos desmarcados y las rutas excluidas no se mueven. Cada movimiento se registra antes y después de ejecutarlo. Si una operación falla o se cancela, puede quedar parcialmente completada; el historial permite deshacer los movimientos registrados.
 
 Al deshacer, el contenido se verifica por SHA-256. Si el destino cambió o el origen está ocupado, se omite ese archivo y se informa del motivo. Una operación puede volver a intentarse desde el historial después de resolver los avisos. Las carpetas vacías creadas por la organización se conservan.
 
@@ -47,7 +53,7 @@ dotnet run --project Desktop/DaniOrganizer.csproj -c Release
 dotnet publish Desktop/DaniOrganizer.csproj -c Release -r win-x64 --self-contained true -o artifacts/portable
 ```
 
-Hay **19 pruebas** del motor: vista previa, colisiones, subcarpetas, fechas, movimientos, recuperación del registro, deshacer, cambios concurrentes, duplicados y cancelación. El ejecutable admite `--ui-smoke` para comprobar el recorrido de escritorio completo usando exclusivamente archivos temporales y un historial aislado. `--screenshot ruta.png` genera una vista de demostración sin modificar archivos reales.
+Hay **24 pruebas** del motor: vista previa, selección parcial, exclusiones, persistencia, límites de carpetas y raíces de unidad, colisiones, subcarpetas, fechas, movimientos, recuperación del registro, deshacer, cambios concurrentes, duplicados y cancelación. El ejecutable admite `--ui-smoke` para comprobar el recorrido de escritorio completo, incluidas casillas, exclusiones guardadas y organización selectiva, usando exclusivamente archivos temporales y un historial aislado. `--screenshot ruta.png` genera una vista de demostración sin modificar archivos reales.
 
 GitHub Actions compila, ejecuta las pruebas, publica el portable y comprueba el flujo de escritorio. Las etiquetas `v*` que coinciden con la versión del proyecto publican una Release con ZIP y SHA-256.
 
