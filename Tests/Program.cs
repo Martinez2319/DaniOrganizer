@@ -151,6 +151,12 @@ try
         Check(ExclusionStore.Load(file).Count == 1, "Exclusions not restored or deduplicated");
         ExclusionStore.Save(file, Array.Empty<string>()); Check(ExclusionStore.Load(file).Count == 0, "Exclusions cannot be removed");
     });
+    Test("drive root exclusions contain descendants without a doubled separator", path =>
+    {
+        Write(path, "a.txt", "a"); string root = Path.GetPathRoot(path)!;
+        Check(Organizer.Within(path, root) && !Organizer.Within(path, path), "Root containment is incorrect");
+        Check(Organizer.Preview(Opt(path) with { ExcludedPaths = new[] { root } }).Moves.Count == 0, "Drive root exclusion failed");
+    });
     Console.WriteLine($"{passed} tests passed."); return 0;
 }
 finally { Directory.Delete(scratch, recursive: true); }

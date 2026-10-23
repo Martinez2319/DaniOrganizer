@@ -53,7 +53,7 @@ dotnet run --project Desktop/DaniOrganizer.csproj -c Release
 dotnet publish Desktop/DaniOrganizer.csproj -c Release -r win-x64 --self-contained true -o artifacts/portable
 ```
 
-Hay **23 pruebas** del motor: vista previa, selección parcial, exclusiones, persistencia, colisiones, subcarpetas, fechas, movimientos, recuperación del registro, deshacer, cambios concurrentes, duplicados y cancelación. El ejecutable admite `--ui-smoke` para comprobar el recorrido de escritorio completo, incluidas casillas, exclusiones guardadas y organización selectiva, usando exclusivamente archivos temporales y un historial aislado. `--screenshot ruta.png` genera una vista de demostración sin modificar archivos reales.
+Hay **24 pruebas** del motor: vista previa, selección parcial, exclusiones, persistencia, límites de carpetas y raíces de unidad, colisiones, subcarpetas, fechas, movimientos, recuperación del registro, deshacer, cambios concurrentes, duplicados y cancelación. El ejecutable admite `--ui-smoke` para comprobar el recorrido de escritorio completo, incluidas casillas, exclusiones guardadas y organización selectiva, usando exclusivamente archivos temporales y un historial aislado. `--screenshot ruta.png` genera una vista de demostración sin modificar archivos reales.
 
 GitHub Actions compila, ejecuta las pruebas, publica el portable y comprueba el flujo de escritorio. Las etiquetas `v*` que coinciden con la versión del proyecto publican una Release con ZIP y SHA-256.
 

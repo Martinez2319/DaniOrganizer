@@ -5,7 +5,7 @@
 - Exclusiones de archivos y carpetas completas, guardadas entre sesiones.
 - Las exclusiones también se aplican al análisis de duplicados.
 - La validación y el historial incluyen únicamente los archivos seleccionados.
-- 23 pruebas del motor y comprobación de selección, exclusiones, persistencia y deshacer en el escritorio.
+- 24 pruebas del motor, incluidos límites de carpetas y raíces de unidad, y comprobación de selección, exclusiones, persistencia y deshacer en el escritorio.
 
 # DaniOrganizer 0.1.0
 

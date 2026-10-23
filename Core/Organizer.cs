@@ -27,8 +27,13 @@ public static class Organizer
 {
     private static readonly JsonSerializerOptions Json = new() { WriteIndented = true };
     public static string DefaultJournal => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "DaniOrganizer", "operations");
-    public static bool Within(string path, string directory) =>
-        Path.GetFullPath(path).StartsWith(Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory)) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+    public static bool Within(string path, string directory)
+    {
+        string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
+        string root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        string prefix = Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar;
+        return !full.Equals(root, StringComparison.OrdinalIgnoreCase) && full.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
     private static bool Same(string a, string b) => string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)), StringComparison.OrdinalIgnoreCase);
 
     public static Plan Select(Plan plan, IEnumerable<string> sources)
