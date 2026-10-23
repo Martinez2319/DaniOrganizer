@@ -122,6 +122,35 @@ try
         Write(path, "invalid.json", "{\"Id\":\"" + Guid.NewGuid().ToString("N") + "\",\"Entries\":null}");
         Check(Organizer.History(path).Count == 0, "Invalid structured history was accepted");
     });
+    Test("only selected files are validated, moved and recorded for undo", path =>
+    {
+        string a = Write(path, "a.txt", "a"), b = Write(path, "b.txt", "b"); var plan = Organizer.Preview(Opt(path));
+        var selected = Organizer.Select(plan, new[] { a }); File.WriteAllText(b, "unselected changed");
+        string journal = Path.Combine(scratch, "journal-selected"); var op = Organizer.Apply(selected, journal);
+        Check(!File.Exists(a) && File.ReadAllText(b) == "unselected changed" && op.Entries.Count == 1, "Unselected file affected");
+        Organizer.Undo(op, journal); Check(File.ReadAllText(a) == "a" && File.ReadAllText(b) == "unselected changed", "Undo affected unselected file");
+    });
+    Test("selection rejects unplanned files and supports an empty selection", path =>
+    {
+        Write(path, "a.txt", "a"); var plan = Organizer.Preview(Opt(path));
+        Throws<ArgumentException>(() => Organizer.Select(plan, new[] { Path.Combine(path, "unknown.txt") }));
+        Check(Organizer.Select(plan, Array.Empty<string>()).Moves.Count == 0, "Empty selection changed plan");
+    });
+    Test("file and recursive folder exclusions keep similarly named siblings", path =>
+    {
+        string excluded = Write(path, "keep.txt", "same"); Write(path, "Privado/nested/a.txt", "same"); string sibling = Write(path, "Privado2/b.txt", "same");
+        var options = Opt(path) with { ExcludedPaths = new[] { excluded, Path.Combine(path, "Privado") } };
+        var plan = Organizer.Preview(options); Check(plan.Moves.Count == 1 && plan.Moves[0].Source == Path.GetFullPath(sibling), "Exclusion boundary failed");
+        Check(Organizer.Duplicates(options, new()).Count == 0, "Excluded files entered duplicate scan");
+        Check(Organizer.Preview(options with { ExcludedPaths = new[] { path } }).Moves.Count == 0, "Excluded root was scanned");
+    });
+    Test("exclusions persist and can be removed", path =>
+    {
+        string file = Path.Combine(path, "settings", "exclusions.json"), excluded = Path.Combine(path, "Privado");
+        ExclusionStore.Save(file, new[] { excluded, excluded.ToUpperInvariant() });
+        Check(ExclusionStore.Load(file).Count == 1, "Exclusions not restored or deduplicated");
+        ExclusionStore.Save(file, Array.Empty<string>()); Check(ExclusionStore.Load(file).Count == 0, "Exclusions cannot be removed");
+    });
     Console.WriteLine($"{passed} tests passed."); return 0;
 }
 finally { Directory.Delete(scratch, recursive: true); }

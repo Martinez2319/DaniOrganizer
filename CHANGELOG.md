@@ -1,3 +1,12 @@
+# DaniOrganizer 0.2.0
+
+- Casillas en la vista previa para elegir exactamente qué archivos mover.
+- Marcar todos, desmarcar todos y contador de selección antes de organizar.
+- Exclusiones de archivos y carpetas completas, guardadas entre sesiones.
+- Las exclusiones también se aplican al análisis de duplicados.
+- La validación y el historial incluyen únicamente los archivos seleccionados.
+- 23 pruebas del motor y comprobación de selección, exclusiones, persistencia y deshacer en el escritorio.
+
 # DaniOrganizer 0.1.0
 
 - Interfaz Windows en español, tema oscuro, selección y arrastre de carpetas.

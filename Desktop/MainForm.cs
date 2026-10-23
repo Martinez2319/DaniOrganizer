@@ -11,6 +11,10 @@ public sealed class MainForm : Form
     private readonly CheckBox recursive = new() { Text = "Incluir subcarpetas", AutoSize = true, Checked = true };
     private readonly Button previewButton = Button("Vista previa"), duplicateButton = Button("Buscar duplicados"), applyButton = Button("Organizar archivos", true), cancelButton = Button("Cancelar"), undoButton = Button("Deshacer selección");
     private readonly Button sourceButton = Button("Elegir carpeta"), destinationButton = Button("Cambiar destino");
+    private readonly Button exclusionsButton = Button("Exclusiones (0)"), selectAllButton = Button("Marcar todos"), clearSelectionButton = Button("Desmarcar todos");
+    private readonly List<string> excludedPaths = new();
+    private readonly string exclusionsFile;
+    private bool fillingPlan;
     private readonly Label status = new(), summary = new();
     private readonly DataGridView planGrid = Grid(), duplicateGrid = Grid(), historyGrid = Grid();
     private readonly WorkspaceTabs tabs = new();
@@ -27,6 +31,13 @@ public sealed class MainForm : Form
         this.demo = demo;
         this.testMode = testMode;
         this.journalDirectory = journalDirectory ?? Organizer.DefaultJournal;
+        exclusionsFile = Path.Combine(Path.GetDirectoryName(this.journalDirectory)!, "exclusions.json");
+        if (!demo)
+        {
+            try { excludedPaths.AddRange(ExclusionStore.Load(exclusionsFile)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+            { MessageBox.Show("No se pudieron cargar las exclusiones. Revísalas antes de organizar.\n" + ex.Message, "DaniOrganizer"); }
+        }
         Text = "DaniOrganizer · Organizador de archivos";
         Size = new(1280, 830); MinimumSize = new(1080, 720); StartPosition = FormStartPosition.CenterScreen;
         BackColor = Background; ForeColor = Ink; Font = new("Segoe UI", 10); AutoScaleMode = AutoScaleMode.Dpi;
@@ -35,7 +46,7 @@ public sealed class MainForm : Form
         layout.Controls.Add(Sidebar(), 0, 0);
         var main = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(28, 22, 28, 18), ColumnCount = 1, RowCount = 6 };
         main.ColumnStyles.Add(new(SizeType.Percent, 100));
-        foreach (int height in new[] { 99, 157, 55, 38 }) main.RowStyles.Add(new(SizeType.Absolute, height));
+        foreach (int height in new[] { 88, 190, 55, 38 }) main.RowStyles.Add(new(SizeType.Absolute, height));
         main.RowStyles.Add(new(SizeType.Percent, 100)); main.RowStyles.Add(new(SizeType.Absolute, 65)); layout.Controls.Add(main, 1, 0);
         var heading = new Panel { Dock = DockStyle.Fill };
         heading.Controls.Add(Label("Cada archivo, en su lugar.", 25, Ink, new(0, 0), true));
@@ -47,21 +58,33 @@ public sealed class MainForm : Form
         summary.Dock = DockStyle.Fill; summary.TextAlign = ContentAlignment.MiddleLeft; summary.ForeColor = Muted;
         summary.Text = "Elige una carpeta para empezar. La vista previa no mueve archivos."; main.Controls.Add(summary, 0, 3);
         ConfigureGrid(planGrid, ("Nombre", 160), ("Categoría", 115), ("Tamaño", 88), ("Carpeta actual", 230), ("Destino propuesto", 300));
+        foreach (DataGridViewColumn column in planGrid.Columns) column.ReadOnly = true;
+        planGrid.ReadOnly = false;
+        planGrid.Columns.Insert(0, new DataGridViewCheckBoxColumn { Name = "Include", HeaderText = "Sí", Width = 48, MinimumWidth = 48, AutoSizeMode = DataGridViewAutoSizeColumnMode.None, ReadOnly = false, SortMode = DataGridViewColumnSortMode.NotSortable });
+        planGrid.CurrentCellDirtyStateChanged += (_, _) => { if (planGrid.IsCurrentCellDirty) planGrid.CommitEdit(DataGridViewDataErrorContexts.Commit); };
+        planGrid.CellValueChanged += (_, e) => { if (e.ColumnIndex == 0 && !fillingPlan) UpdateSelection(); };
         ConfigureGrid(duplicateGrid, ("Grupo", 65), ("Archivo", 180), ("Tamaño", 100), ("Ubicación", 500));
         ConfigureGrid(historyGrid, ("Fecha", 160), ("Movimientos pendientes de deshacer", 210), ("Estado", 210));
         tabs.Dock = DockStyle.Fill;
-        AddTab("Vista previa", planGrid); AddTab("Duplicados", duplicateGrid); AddTab("Historial", historyGrid); main.Controls.Add(tabs, 0, 4);
+        var planPage = new Panel { Dock = DockStyle.Fill };
+        var selectionBar = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 42, Padding = new(0, 3, 0, 0) };
+        selectAllButton.Width = 140; clearSelectionButton.Width = 155;
+        selectionBar.Controls.AddRange(new Control[] { selectAllButton, clearSelectionButton, new Label { Text = "Marca solo lo que quieres mover", AutoSize = true, ForeColor = Muted, Margin = new(10, 8, 0, 0) } });
+        planPage.Controls.Add(planGrid); planPage.Controls.Add(selectionBar);
+        AddTab("Vista previa", planPage); AddTab("Duplicados", duplicateGrid); AddTab("Historial", historyGrid); main.Controls.Add(tabs, 0, 4);
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Padding = new(0, 14, 0, 0) };
         footer.ColumnStyles.Add(new(SizeType.Percent, 100)); footer.ColumnStyles.Add(new(SizeType.Absolute, 190));
         status.Dock = DockStyle.Fill; status.ForeColor = Muted; status.Text = "Listo · Todo se procesa en tu equipo.";
         footer.Controls.Add(status, 0, 0); footer.Controls.Add(undoButton, 1, 0); main.Controls.Add(footer, 0, 5);
         sourceButton.Click += (_, _) => PickSource(); destinationButton.Click += (_, _) => PickDestination();
+        exclusionsButton.Click += (_, _) => EditExclusions();
+        selectAllButton.Click += (_, _) => SetSelection(true); clearSelectionButton.Click += (_, _) => SetSelection(false);
         source.TextChanged += (_, _) => InvalidatePlan(); destination.TextChanged += (_, _) => InvalidatePlan();
         grouping.SelectedIndexChanged += (_, _) => InvalidatePlan(); recursive.CheckedChanged += (_, _) => InvalidatePlan();
         previewButton.Click += async (_, _) => await Preview(); duplicateButton.Click += async (_, _) => await FindDuplicates();
         applyButton.Click += async (_, _) => await Apply(); undoButton.Click += async (_, _) => await Undo();
         cancelButton.Click += (_, _) => { cancellation?.Cancel(); status.Text = "Cancelando… se conservará el registro de movimientos completados."; };
-        planGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && plan != null) Reveal(plan.Moves[e.RowIndex].Source); };
+        planGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && e.ColumnIndex != 0 && planGrid.Rows[e.RowIndex].Tag is PlannedMove move) Reveal(move.Source); };
         duplicateGrid.CellDoubleClick += (_, e) => { if (e.RowIndex >= 0 && duplicateGrid.Rows[e.RowIndex].Tag is string path) Reveal(path); };
         historyGrid.SelectionChanged += (_, _) => UpdateButtons();
         AllowDrop = true; DragEnter += (_, e) => { if (!busy && e.Data?.GetData(DataFormats.FileDrop) is string[] paths && paths.Length == 1 && Directory.Exists(paths[0])) e.Effect = DragDropEffects.Copy; };
@@ -83,14 +106,14 @@ public sealed class MainForm : Form
         side.Controls.Add(Label("Mira cada destino\nantes de organizar.", 10, Muted, new(25, 353)));
         side.Controls.Add(Label("03   Organiza", 12, Ink, new(25, 430), true));
         side.Controls.Add(Label("Vuelve atrás desde\nel historial si lo necesitas.", 10, Muted, new(25, 463)));
-        var badge = Label("LOCAL · SIN NUBE\nv0.1.0 / Windows", 9, Accent, new(25, 650)); badge.Anchor = AnchorStyles.Bottom | AnchorStyles.Left; side.Controls.Add(badge);
+        var badge = Label("LOCAL · SIN NUBE\nv0.2.0 / Windows", 9, Accent, new(25, 650)); badge.AutoSize = false; badge.Height = 48; badge.Dock = DockStyle.Bottom; side.Controls.Add(badge);
         return side;
     }
     private Control FolderCard()
     {
-        var card = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new(14), ColumnCount = 3, RowCount = 3 };
+        var card = new TableLayoutPanel { Dock = DockStyle.Fill, BackColor = Surface, Padding = new(14), ColumnCount = 3, RowCount = 4 };
         card.ColumnStyles.Add(new(SizeType.Absolute, 74)); card.ColumnStyles.Add(new(SizeType.Percent, 100)); card.ColumnStyles.Add(new(SizeType.Absolute, 155));
-        card.RowStyles.Add(new(SizeType.Absolute, 40)); card.RowStyles.Add(new(SizeType.Absolute, 40)); card.RowStyles.Add(new(SizeType.Percent, 100));
+        card.RowStyles.Add(new(SizeType.Absolute, 40)); card.RowStyles.Add(new(SizeType.Absolute, 40)); card.RowStyles.Add(new(SizeType.Absolute, 40)); card.RowStyles.Add(new(SizeType.Percent, 100));
         foreach (var box in new[] { source, destination }) { box.Dock = DockStyle.Fill; box.BackColor = Background; box.ForeColor = Ink; box.BorderStyle = BorderStyle.FixedSingle; box.Margin = new(3, 7, 10, 3); }
         source.PlaceholderText = "Selecciona o arrastra una carpeta…"; destination.PlaceholderText = "Se propone _Organizado dentro del origen";
         card.Controls.Add(new Label { Text = "Origen", AutoSize = true, Margin = new(0, 10, 0, 0), ForeColor = Muted }, 0, 0); card.Controls.Add(source, 1, 0); card.Controls.Add(sourceButton, 2, 0);
@@ -99,6 +122,10 @@ public sealed class MainForm : Form
         var choices = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false, Padding = new(0, 5, 0, 0) };
         grouping.Width = 300; grouping.Height = 28;
         recursive.Margin = new(18, 5, 0, 0); choices.Controls.AddRange(new Control[] { grouping, recursive }); card.Controls.Add(choices, 1, 2); card.SetColumnSpan(choices, 2);
+        exclusionsButton.Width = 170; exclusionsButton.Height = 30; exclusionsButton.Text = $"Exclusiones ({excludedPaths.Count})";
+        var exclusionsRow = new FlowLayoutPanel { Dock = DockStyle.Fill, WrapContents = false };
+        exclusionsRow.Controls.Add(exclusionsButton); exclusionsRow.Controls.Add(new Label { Text = "Archivos y carpetas que deben quedarse intactos", AutoSize = true, ForeColor = Muted, Margin = new(10, 6, 0, 0) });
+        card.Controls.Add(exclusionsRow, 1, 3); card.SetColumnSpan(exclusionsRow, 2);
         return card;
     }
     private static Label Label(string text, float size, Color color, Point location, bool bold = false) => new() { Text = text, AutoSize = true, Location = location, ForeColor = color, Font = new("Segoe UI", size, bold ? FontStyle.Bold : FontStyle.Regular) };
@@ -127,13 +154,42 @@ public sealed class MainForm : Form
     private Options ReadOptions()
     {
         if (string.IsNullOrWhiteSpace(source.Text) || string.IsNullOrWhiteSpace(destination.Text)) throw new ArgumentException("Selecciona el origen y el destino.");
-        return new(source.Text.Trim(), destination.Text.Trim(), (Grouping)grouping.SelectedIndex, recursive.Checked);
+        return new(source.Text.Trim(), destination.Text.Trim(), (Grouping)grouping.SelectedIndex, recursive.Checked, excludedPaths.ToArray());
     }
-    private void InvalidatePlan() { plan = null; planGrid.Rows.Clear(); duplicateGrid.Rows.Clear(); summary.Text = "Genera una vista previa para revisar cada movimiento."; UpdateButtons(); }
+    private void EditExclusions()
+    {
+        using var dialog = new ExclusionDialog(excludedPaths);
+        if (dialog.ShowDialog(this) != DialogResult.OK) return;
+        try { SaveExclusions(dialog.ExcludedPaths); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MessageBox.Show(this, "No se pudieron guardar las exclusiones. No se cambiaron las reglas.\n" + ex.Message, "DaniOrganizer"); }
+    }
+    private void SaveExclusions(IEnumerable<string> paths)
+    {
+        var changed = paths.ToArray(); ExclusionStore.Save(exclusionsFile, changed);
+        excludedPaths.Clear(); excludedPaths.AddRange(changed); exclusionsButton.Text = $"Exclusiones ({excludedPaths.Count})";
+        InvalidatePlan(); status.Text = "Exclusiones guardadas. Genera una nueva vista previa.";
+    }
+    private IEnumerable<PlannedMove> CheckedMoves() => planGrid.Rows.Cast<DataGridViewRow>()
+        .Where(row => row.Cells[0].Value is true && row.Tag is PlannedMove).Select(row => (PlannedMove)row.Tag!);
+    private void SetSelection(bool selected)
+    {
+        fillingPlan = true;
+        foreach (DataGridViewRow row in planGrid.Rows) row.Cells[0].Value = selected;
+        fillingPlan = false; UpdateSelection();
+    }
+    private void UpdateSelection()
+    {
+        if (demo || plan == null) return;
+        var selected = CheckedMoves().ToArray();
+        summary.Text = $"{selected.Length:N0} de {plan.Moves.Count:N0} seleccionados · {SizeText(selected.Sum(move => move.Length))} · {plan.Warnings.Count} avisos";
+        applyButton.Text = $"Organizar ({selected.Length:N0})"; UpdateButtons();
+    }
+    private void InvalidatePlan() { plan = null; planGrid.Rows.Clear(); duplicateGrid.Rows.Clear(); applyButton.Text = "Organizar archivos"; summary.Text = "Genera una vista previa para revisar cada movimiento."; UpdateButtons(); }
     private void UpdateButtons()
     {
-        foreach (var control in new Control[] { source, destination, grouping, recursive, sourceButton, destinationButton, previewButton, duplicateButton }) control.Enabled = !busy;
-        applyButton.Enabled = !busy && (demo || plan?.Moves.Count > 0); cancelButton.Enabled = busy;
+        foreach (var control in new Control[] { source, destination, grouping, recursive, sourceButton, destinationButton, previewButton, duplicateButton, exclusionsButton }) control.Enabled = !busy;
+        selectAllButton.Enabled = clearSelectionButton.Enabled = !busy && (demo || plan?.Moves.Count > 0); planGrid.Enabled = !busy;
+        applyButton.Enabled = !busy && (demo || plan != null && CheckedMoves().Any()); cancelButton.Enabled = busy;
         undoButton.Enabled = !busy && !demo && historyGrid.SelectedRows.Count > 0 && historyGrid.SelectedRows[0].Tag is Operation op && op.Entries.Any(entry => entry.State != "Undone");
     }
     private async Task Work(string message, Func<CancellationToken, Task> action)
@@ -149,8 +205,9 @@ public sealed class MainForm : Form
         await Work("Analizando archivos…", async token =>
         {
             var options = ReadOptions(); plan = await Task.Run(() => Organizer.Preview(options, token), token);
-            planGrid.Rows.Clear(); foreach (var move in plan.Moves) planGrid.Rows.Add(Path.GetFileName(move.Source), Organizer.Category(Path.GetExtension(move.Source)), SizeText(move.Length), Path.GetDirectoryName(move.Source), move.Destination);
-            summary.Text = $"{plan.Moves.Count:N0} archivos · {SizeText(plan.Moves.Sum(move => move.Length))} · {plan.Warnings.Count} avisos";
+            fillingPlan = true; planGrid.Rows.Clear();
+            foreach (var move in plan.Moves) { int row = planGrid.Rows.Add(true, Path.GetFileName(move.Source), Organizer.Category(Path.GetExtension(move.Source)), SizeText(move.Length), Path.GetDirectoryName(move.Source), move.Destination); planGrid.Rows[row].Tag = move; }
+            fillingPlan = false; UpdateSelection();
             status.Text = "Vista previa lista. Revisa los destinos antes de organizar."; tabs.SelectedIndex = 0; ShowWarnings(plan.Warnings);
         });
     }
@@ -169,7 +226,9 @@ public sealed class MainForm : Form
     private async Task Apply(bool confirm = true)
     {
         if (plan == null) return;
-        var selectedPlan = plan;
+        planGrid.EndEdit();
+        var selectedPlan = Organizer.Select(plan, CheckedMoves().Select(move => move.Source));
+        if (selectedPlan.Moves.Count == 0) return;
         if (confirm && MessageBox.Show(this, $"Se moverán {selectedPlan.Moves.Count:N0} archivos al destino mostrado.\n\nPuedes deshacer desde el historial. ¿Organizar ahora?", "Aplicar vista previa", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
         await Work("Organizando…", async token =>
         {
@@ -208,8 +267,8 @@ public sealed class MainForm : Form
     {
         source.Text = @"C:\Usuarios\Daniel\Descargas"; destination.Text = @"C:\Usuarios\Daniel\Descargas\_Organizado";
         foreach (var item in new[] { ("vacaciones.jpg", "Imagenes", "3.2 MB"), ("proyecto_final.pdf", "Documentos", "1.8 MB"), ("presupuesto.xlsx", "Hojas de calculo", "248 KB"), ("playlist.mp3", "Audio", "7.4 MB"), ("notas.md", "Documentos", "12 KB"), ("respaldo.zip", "Comprimidos", "126 MB"), ("demo.mp4", "Videos", "48 MB") })
-            planGrid.Rows.Add(item.Item1, item.Item2, item.Item3, source.Text, Path.Combine(destination.Text, item.Item2, item.Item1));
-        summary.Text = "VISTA DE DEMOSTRACIÓN · 7 archivos · 186.7 MB · Ningún archivo real se modifica";
+            planGrid.Rows.Add(item.Item1 is not ("respaldo.zip" or "proyecto_final.pdf"), item.Item1, item.Item2, item.Item3, source.Text, Path.Combine(destination.Text, item.Item2, item.Item1));
+        summary.Text = "DEMOSTRACIÓN · Marca qué archivos organizar y añade exclusiones";
         status.Text = "Vista previa · Cada movimiento quedará registrado para poder deshacerlo.";
     }
     internal async Task Smoke(string directory)
@@ -226,6 +285,23 @@ public sealed class MainForm : Form
         if (File.Exists(Path.Combine(directory, "a.txt")) || historyGrid.Rows.Count != 1 || !undoButton.Enabled) throw new Exception("La organización no actualiza el historial.");
         await Undo(confirm: false);
         if (File.ReadAllText(Path.Combine(directory, "a.txt")) != "same" || File.ReadAllText(Path.Combine(directory, "b.txt")) != "same") throw new Exception("La interfaz no deshace correctamente.");
+        string protectedFolder = Path.Combine(directory, "Privado"); Directory.CreateDirectory(protectedFolder);
+        File.WriteAllText(Path.Combine(protectedFolder, "secreto.txt"), "intacto");
+        SaveExclusions(new[] { Path.Combine(directory, "b.txt"), protectedFolder });
+        if (plan != null || applyButton.Enabled) throw new Exception("Las exclusiones no invalidan el plan.");
+        using (var reopened = new MainForm(testMode: true, journalDirectory: journalDirectory))
+            if (reopened.excludedPaths.Count != 2) throw new Exception("Las exclusiones no se conservan al reiniciar.");
+        await Preview(); if (planGrid.Rows.Count != 2) throw new Exception("Aparecen archivos excluidos en la vista previa.");
+        await FindDuplicates(); if (duplicateGrid.Rows.Count != 0) throw new Exception("Se analizaron duplicados excluidos.");
+        SetSelection(false); if (applyButton.Enabled) throw new Exception("Se puede organizar sin seleccionar archivos.");
+        foreach (DataGridViewRow row in planGrid.Rows) if (row.Tag is PlannedMove move && Path.GetFileName(move.Source) == "a.txt") row.Cells[0].Value = true;
+        if (CheckedMoves().Count() != 1 || !applyButton.Enabled) throw new Exception("Las casillas no actualizan la selección.");
+        File.WriteAllText(Path.Combine(directory, "foto.png"), "cambio sin seleccionar");
+        await Apply(confirm: false);
+        if (File.Exists(Path.Combine(directory, "a.txt")) || File.ReadAllText(Path.Combine(directory, "b.txt")) != "same" || File.ReadAllText(Path.Combine(directory, "foto.png")) != "cambio sin seleccionar" || File.ReadAllText(Path.Combine(protectedFolder, "secreto.txt")) != "intacto")
+            throw new Exception("La organización selectiva modificó archivos desmarcados o excluidos.");
+        await Undo(confirm: false);
+        if (File.ReadAllText(Path.Combine(directory, "a.txt")) != "same") throw new Exception("No se pudo deshacer la selección.");
     }
 }
 
